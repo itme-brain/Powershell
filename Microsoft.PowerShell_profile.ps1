@@ -1,75 +1,83 @@
-# Function to check if the session is an SSH session
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# Prompt Configuration
 function Check-Ssh {
     if ($env:SSH_CLIENT -or $env:SSH_TTY) {
-        $global:sshPrompt = "$([char]27)[1;37m$($env:USERNAME)@$($env:COMPUTERNAME):$([char]27)[0m`n"
-        return $true
+        return "`n`e[1;37m$($env:USERNAME)@$($env:COMPUTERNAME):`e[0m`n"
+    } else {
+        return ""
     }
-    $global:sshPrompt = ""
-    return $false
 }
 
-# Function to manage virtual environment icons and project status
-function Check-Venv {
-    $global:venvIcons = ""
-
-    function Add-Icon {
-        param([string]$icon)
-        if (-not ($global:venvIcons -contains $icon)) {
-            $global:venvIcons += "$icon "
-        }
+function Relative-Path {
+    param ($target, $base)
+    try {
+        return [System.IO.Path]::GetRelativePath($base, $target)
+    } catch {
+        return "."
     }
+}
 
-    function Remove-Icon {
-        param([string]$icon)
-        $global:venvIcons = $global:venvIcons.Replace("$icon ", "")
-    }
+function Set-GitDir {
+    param ($gitRoot, $gitCurrentDir, $gitRootDir)
 
-    $py = "py"
-    $js = "js"
-    $nix = "nix"
 
-    if ($env:DISPLAY) {
-        $py = ""
-        $js = "󰌞"
-        $nix = ""
-    }
-
-    $pythonIcon = "$([char]27)[1;33m$py$([char]27)[0m"
-    $nodeIcon = "$([char]27)[1;93m$js$([char]27)[0m"
-    $nixIcon = "$([char]27)[1;34m$nix$([char]27)[0m"
-
-    if ($env:IN_NIX_SHELL) {
-        Add-Icon $nixIcon
+    if ($Host.UI -and $Host.UI.SupportsVirtualTerminal -eq $true) {
+      $projectIcon = " "
     } else {
-        Remove-Icon $nixIcon
+      $projectIcon = "..\"
     }
+
+    $superprojectRoot = git rev-parse --show-superproject-working-tree 2>$null
+
+    if ($superprojectRoot) {
+        $submoduleName = Split-Path $gitRoot -Leaf
+        $superprojectName = Split-Path $superprojectRoot -Leaf
+        $workingDir = "`e[1;34m$projectIcon$superprojectName\$submoduleName\$gitCurrentDir`e[0m"
+    } else {
+        $workingDir = "`e[1;34m$projectIcon$gitRootDir$gitCurrentDir`e[0m"
+    }
+
+    return $workingDir
+}
+
+function Check-Venv {
+    param ($gitRoot)
+    $venvIcons = ""
+
+    $pyIcon = "py"
+    $jsIcon = "js"
+    $nixIcon = "nix"
+
+    if ($Host.UI -and $Host.UI.SupportsVirtualTerminal -eq $true) {
+        $pyIcon = ""
+        $jsIcon = "󰌞"
+        $nixIcon = ""
+    }
+
+    $pythonIcon = "`e[1;33m$pyIcon`e[0m"
+    $nodeIcon = "`e[1;93m$jsIcon`e[0m"
+    $nixIcon = "`e[1;34m$nixIcon`e[0m"
 
     if ($env:VIRTUAL_ENV) {
-        Add-Icon $pythonIcon
-    } else {
-        Remove-Icon $pythonIcon
+        $venvIcons += "$pythonIcon "
     }
 
-    if (Test-Path -Path "$PWD\node_modules") {
-        Add-Icon $nodeIcon
-    } else {
-        Remove-Icon $nodeIcon
+    if ($env:IN_NIX_SHELL) {
+      $venvIcons += "$nixIcon "
     }
+
+    if (Test-Path -Path (Join-Path $gitRoot "node_modules")) {
+        $venvIcons += "$nodeIcon "
+    }
+
+    return $venvIcons
 }
 
-# Function to set the Git directory status in the prompt
-function Set-GitDir {
-    if ($env:DISPLAY) {
-        $global:projectIcon = " "
-    } else {
-        $global:projectIcon = "../"
-    }
-
+function Check-Project {
     $gitRoot = git rev-parse --show-toplevel 2>$null
-
     if ($gitRoot) {
         $gitBranch = git branch --show-current 2>$null
-
         if (-not $gitBranch) {
             $gitBranch = git describe --tags --exact-match 2>$null
             if (-not $gitBranch) {
@@ -77,43 +85,43 @@ function Set-GitDir {
             }
         }
 
-        $gitCurrentDir = Resolve-Path -Relative . -RelativeBase $gitRoot
-        $gitRootDir = Split-Path -Leaf $gitRoot
-
-        if ($env:DISPLAY) {
-            $global:gitBranchPrompt = "$([char]27)[1;31m$gitBranch 󰘬:$([char]27)[0m"
+        $relativePath = Relative-Path $PWD.Path $gitRoot
+        if ($relativePath -eq "." -or [string]::IsNullOrEmpty($relativePath)) {
+            $gitCurrentDir = ""
         } else {
-            $global:gitBranchPrompt = "$([char]27)[1;31m${gitBranch}:$([char]27)[0m"
+            $gitCurrentDir = "\$relativePath"
+        }
+
+        $gitRootDir = Split-Path $gitRoot -Leaf
+        $gitBranchPrompt = "`e[1;31m${gitBranch}:`e[0m"
+        $workingDir = Set-GitDir -gitRoot $gitRoot -gitCurrentDir $gitCurrentDir -gitRootDir $gitRootDir
+        $venvIcons = Check-Venv -gitRoot $gitRoot
+
+        return @{
+            WorkingDir = $workingDir
+            GitBranchPrompt = $gitBranchPrompt
+            VenvIcons = $venvIcons
+        }
+    } else {
+        $workingDir = "`e[1;34m$($PWD.Path)`e[0m"
+        return @{
+            WorkingDir = $workingDir
+            GitBranchPrompt = ""
+            VenvIcons = ""
         }
     }
 }
 
-# Function to check if the current project is in Git
-function Check-Project {
-    $gitRoot = git rev-parse --show-toplevel 2>$null
+# Define the Prompt function
+function Prompt {
+    $greenArrow = "`e[1;32m>> "
+    $whiteText = "`e[0m"
 
-    if ($gitRoot) {
-        Set-GitDir
-        Check-Venv
-        return $true
-    }
-    return $false
-}
+    $sshPrompt = Check-Ssh
+    $projectInfo = Check-Project
 
-# Function to set the PowerShell prompt
-function prompt {
-    $greenArrow = "$([char]27)[1;32m>> "
-    $whiteText = "$([char]27)[0m"
-    $workingDir = "$([char]27)[1;34m$PWD$([char]27)[0m"
-
-    $global:sshPrompt = ""
-    [void](Check-Ssh)
-
-    $global:venvIcons = ""
-    $global:gitBranchPrompt = ""
-    [void](Check-Project)
-
-    return "$global:sshPrompt$workingDir`n$global:venvIcons$greenArrow$global:gitBranchPrompt$whiteText"
+    $promptString = "$sshPrompt$($projectInfo.WorkingDir)`n$($projectInfo.VenvIcons)$greenArrow$($projectInfo.GitBranchPrompt)$whiteText"
+    return $promptString
 }
 
 Set-Alias vim nvim 
