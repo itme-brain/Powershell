@@ -124,6 +124,20 @@ function Prompt {
     return $promptString
 }
 
+function touch {
+    param (
+        [string]$path
+    )
+
+    if (-not (Test-Path $path)) {
+        # Create an empty file if it doesn't exist
+        New-Item -ItemType File -Path $path
+    } else {
+        # Update the timestamp of the existing file
+        (Get-Item $path).LastWriteTime = Get-Date
+    }
+}
+
 Set-Alias vim nvim 
 Set-Alias grep Select-String
 
